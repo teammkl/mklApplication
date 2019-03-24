@@ -32,11 +32,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private static final String TAG = "MainActivity";
     ListView listView;
     FloatingActionButton fab;
-//    CheckBox checkBox;
-//    ArrayList<String> rList;
-//    ArrayList<Restaurant> myRList;
     ArrayList<String> checkedPositions;
-//    int checkedCount;
     DatabaseHelper mDatabaseHelper;
 
     @Override
@@ -55,25 +51,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         fab.setOnClickListener(this);
 //        checkBox.setOnClickListener(this);
 
-        Bundle bundle = getIntent().getExtras();
+//        Bundle bundle = getIntent().getExtras();
 
         Log.e(TAG, "db size: " + mDatabaseHelper.size());
         if (mDatabaseHelper.size() == 0) {
             initializeDatabase();
 //            rList = new ArrayList<>();
 //            myRList = new ArrayList<>();
-        } else {
-//            rList = bundle.getStringArrayList("rList");
-//            myRList = bundle.getParcelableArrayList("myRList");
-//            String[] removedRestaurants = bundle.getStringArray("removedRestaurants");
-//            rList.addAll(Arrays.asList(removedRestaurants));
         }
 
-        // create string arrayList to replace rList in arrayAdapter
-//        listView.setChoiceMode(AbsListView.CHOICE_MODE_MULTIPLE);
-//        ArrayAdapter arrayAdapter = new ArrayAdapter(this,
-//                android.R.layout.simple_list_item_activated_1, myRList);
-//        listView.setAdapter(arrayAdapter);
         populateListView();
         listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
@@ -103,11 +89,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 Log.e(TAG, "checkedPositions: " + checkedPositions.toString());
             }
         });
-//        listView.setHasFixedSize(true);
-//        layoutManager = new LinearLayoutManager(this);
-//        adapter = new MainAdapter(rList);
-//        recyclerView.setLayoutManager(layoutManager);
-//        recyclerView.setAdapter(adapter);
 
 //        ImageView photo = findViewById(R.id.photo);
 //        int imageResource = getResources().getIdentifier("@drawable/mcd_logo",
@@ -123,7 +104,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         // get data and append to the list
         Cursor data = mDatabaseHelper.getData();
         ArrayList<String> nameList = new ArrayList<>();
-        Log.e(TAG, "db size: " + mDatabaseHelper.size() + ", nameList size: " + nameList.size());
+        Log.e(TAG, "db size: " + mDatabaseHelper.size() + ", popRnameList size: " + nameList.size());
 //        Log.e(TAG, "Reset: " + mDatabaseHelper.resetAllData());
         StringBuilder stringBuilder = new StringBuilder();
         stringBuilder.append("[");
@@ -148,7 +129,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         ListAdapter listAdapter = new ArrayAdapter(this,
                 android.R.layout.simple_list_item_activated_1, nameList);
         listView.setAdapter(listAdapter);
-        Log.e(TAG, "db size: " + mDatabaseHelper.size() + ", nameList size: " + nameList.size());
+        Log.e(TAG, "db size: " + mDatabaseHelper.size() + ", popRNameList size: " + nameList.size());
     }
 
     private ArrayList<Restaurant> initializeDatabase() {
@@ -240,12 +221,16 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 }
 
                 Intent intent = new Intent(MainActivity.this, MyRestaurantsActivity.class);
-//                intent.putExtra("addedRestaurants", selectedItems);
-//                intent.putExtra("rList", rList);
-//                intent.putExtra("myRList", myRList);
+                Cursor data = mDatabaseHelper.getData();
+                StringBuilder stringBuilder = new StringBuilder();
+                stringBuilder.append("[");
+                while (data.moveToNext()) {
+                    stringBuilder.append(data.getInt(14));
+                    stringBuilder.append(", ");
+                }
+                stringBuilder.append("]");
+                Log.i(TAG, stringBuilder.toString());
                 startActivity(intent);
-//                String str = selectedItems.toString();
-//                Snackbar.make(v, str, Snackbar.LENGTH_LONG).setAction("Action", null).show();
                 break;
             case R.id.checkBox:
 //                checkBox.setSelected(!checkBox.isSelected());
