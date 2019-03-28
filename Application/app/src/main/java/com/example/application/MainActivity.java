@@ -80,7 +80,7 @@ public class MainActivity extends AppCompatActivity {
         setSupportActionBar(toolbar);
         WifiManager wm = (WifiManager)getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         multicastLock = wm.createMulticastLock("test");
-//        multicastLock.acquire();
+        multicastLock.acquire();
         mTextView = (TextView) findViewById(R.id.infotext);
         mBtnSearch = (Button) findViewById(R.id.btn_search);
         mBtnSearch.setOnClickListener(new View.OnClickListener() {
