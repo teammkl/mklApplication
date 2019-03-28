@@ -1,259 +1,294 @@
 package com.example.application;
 
+import android.content.Context;
 import android.content.Intent;
-import android.database.Cursor;
+import android.net.wifi.WifiManager;
 import android.os.Bundle;
-import android.support.design.widget.FloatingActionButton;
+import android.os.Handler;
+import android.os.Message;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.View;
-import android.view.Menu;
-import android.view.MenuItem;
-import android.widget.AbsListView;
+import android.view.ViewGroup;
 import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
-import android.widget.ListAdapter;
+import android.widget.BaseAdapter;
+import android.widget.Button;
 import android.widget.ListView;
+import android.widget.TextView;
 import android.widget.Toast;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.IOException;
-import java.io.InputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.MulticastSocket;
+import android.net.wifi.WifiManager.MulticastLock;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 
-// checkpoint: popular restaurants page is working with db, need to fix connection to myRestaurants page
+public class MainActivity extends AppCompatActivity {
+    private static final String TAG = "APITEST";
+    private static final int MSG_SHOWLOG = 0;
+    private static final int MSG_FOUND_DEVICE = 1;
+    private static final int MSG_DISCOVER_FINISH = 2;
+    private static final int MSG_STOP_SEARCH = 3;
 
-public class MainActivity extends AppCompatActivity implements View.OnClickListener {
-
-    private static final String TAG = "MainActivity";
-    ListView listView;
-    FloatingActionButton fab;
-    ArrayList<String> checkedPositions;
-    DatabaseHelper mDatabaseHelper;
+    private static final String UDP_HOST = "239.255.255.250";
+    private static final int UDP_PORT = 1982;
+    private static final String message = "M-SEARCH * HTTP/1.1\r\n" +
+            "HOST:239.255.255.250:1982\r\n" +
+            "MAN:\"ssdp:discover\"\r\n" +
+            "ST:wifi_bulb\r\n";//用于发送的字符串
+    private DatagramSocket mDSocket;
+    private boolean mSeraching = true;
+    private ListView mListView;
+    private MyAdapter mAdapter;
+    List<HashMap<String, String>> mDeviceList = new ArrayList<HashMap<String, String>>();
+    private TextView mTextView;
+    private Button mBtnSearch;
+    private Handler mHandler = new Handler() {
+        @Override
+        public void handleMessage(Message msg) {
+            super.handleMessage(msg);
+            switch (msg.what) {
+                case MSG_FOUND_DEVICE:
+                    mAdapter.notifyDataSetChanged();
+                    break;
+                case MSG_SHOWLOG:
+                    Toast.makeText(MainActivity.this, "" + msg.obj.toString(), Toast.LENGTH_SHORT).show();
+                    break;
+                case MSG_STOP_SEARCH:
+                    mSearchThread.interrupt();
+                    mAdapter.notifyDataSetChanged();
+                    mSeraching = false;
+                    break;
+                case MSG_DISCOVER_FINISH:
+                    mAdapter.notifyDataSetChanged();
+                    break;
+            }
+        }
+    };
+    private MulticastLock multicastLock;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        Toolbar toolbar = findViewById(R.id.toolbar);
+        Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-        checkedPositions = new ArrayList<>();
-        mDatabaseHelper = new DatabaseHelper(this);
+        WifiManager wm = (WifiManager)getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        multicastLock = wm.createMulticastLock("test");
+//        multicastLock.acquire();
+        mTextView = (TextView) findViewById(R.id.infotext);
+        mBtnSearch = (Button) findViewById(R.id.btn_search);
+        mBtnSearch.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                searchDevice();
+            }
 
-        listView = findViewById(R.id.listView);
-        fab = findViewById(R.id.fab);
-//        checkBox = findViewById(R.id.checkBox);
-
-        fab.setOnClickListener(this);
-//        checkBox.setOnClickListener(this);
-
-//        Bundle bundle = getIntent().getExtras();
-
-        Log.e(TAG, "db size: " + mDatabaseHelper.size());
-        if (mDatabaseHelper.size() == 0) {
-            initializeDatabase();
-//            rList = new ArrayList<>();
-//            myRList = new ArrayList<>();
-        }
-
-        populateListView();
-        listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+        });
+        mListView = (ListView) findViewById(R.id.deviceList);
+        mAdapter = new MyAdapter(this);
+        mListView.setAdapter(mAdapter);
+        mListView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                Cursor data = mDatabaseHelper.getData();
-
-                data.moveToNext();
-                while (data.getInt(14) != 0 && data.moveToNext()) { }
-                int i = 0;
-                while (i < position) {
-                    if (data.getInt(14) == 0) { // only increment if item is popularRestaurants
-                        i++;
-                    }
-                    data.moveToNext();
-                }
-                while (data.getInt(14) != 0 && data.moveToNext()) { }
-
-                String business_id = data.getString(1);
-                print("dbClicked #" + position + ": " + data.getString(2) + ", " + business_id);
-                // if clickedItem was already checked, decrement checkedCount and "switch boolean"
-                int x = checkedPositions.indexOf(business_id);
-                if (x > -1) { // if item is checked
-                    checkedPositions.remove(x);
-                } else {
-                    checkedPositions.add(business_id);
-                }
-                Log.e(TAG, "checkedPositions: " + checkedPositions.toString());
+                HashMap<String, String> bulbInfo = mDeviceList.get(position);
+                Intent intent = new Intent(MainActivity.this, ControlActivity.class);
+                String ipinfo = bulbInfo.get("Location").split("//")[1];
+                String ip = ipinfo.split(":")[0];
+                String port = ipinfo.split(":")[1];
+                intent.putExtra("bulbinfo", bulbInfo);
+                intent.putExtra("ip", ip);
+                intent.putExtra("port", port);
+                startActivity(intent);
             }
         });
-
-//        ImageView photo = findViewById(R.id.photo);
-//        int imageResource = getResources().getIdentifier("@drawable/mcd_logo",
-//                null, this.getPackageName());
-//        photo.setImageResource(imageResource);
-
-
     }
+    private Thread mSearchThread = null;
+    private void searchDevice() {
 
-    private void populateListView() {
-        Log.d(TAG, "populateListView: Displaying data in the List View.");
+        mDeviceList.clear();
+        mAdapter.notifyDataSetChanged();
+        mSeraching = true;
+        mSearchThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    mDSocket = new DatagramSocket();
+                    DatagramPacket dpSend = new DatagramPacket(message.getBytes(),
+                            message.getBytes().length, InetAddress.getByName(UDP_HOST),
+                            UDP_PORT);
+                    mDSocket.send(dpSend);
+                    mHandler.sendEmptyMessageDelayed(MSG_STOP_SEARCH,2000);
+                    while (mSeraching) {
+                        byte[] buf = new byte[1024];
+                        DatagramPacket dpRecv = new DatagramPacket(buf, buf.length);
+                        mDSocket.receive(dpRecv);
+                        byte[] bytes = dpRecv.getData();
+                        StringBuffer buffer = new StringBuffer();
+                        for (int i = 0; i < dpRecv.getLength(); i++) {
+                            // parse /r
+                            if (bytes[i] == 13) {
+                                continue;
+                            }
+                            buffer.append((char) bytes[i]);
+                        }
+                        Log.d("socket", "got message:" + buffer.toString());
+                        if (!buffer.toString().contains("yeelight")) {
+                            mHandler.obtainMessage(MSG_SHOWLOG, "收到一条消息,不是Yeelight灯泡").sendToTarget();
+                            return;
+                        }
+                        String[] infos = buffer.toString().split("\n");
+                        HashMap<String, String> bulbInfo = new HashMap<String, String>();
+                        for (String str : infos) {
+                            int index = str.indexOf(":");
+                            if (index == -1) {
+                                continue;
+                            }
+                            String title = str.substring(0, index);
+                            String value = str.substring(index + 1);
+                            bulbInfo.put(title, value);
+                        }
+                        if (!hasAdd(bulbInfo)){
+                            mDeviceList.add(bulbInfo);
+                        }
 
-        // get data and append to the list
-        Cursor data = mDatabaseHelper.getData();
-        ArrayList<String> nameList = new ArrayList<>();
-        Log.e(TAG, "db size: " + mDatabaseHelper.size() + ", popRnameList size: " + nameList.size());
-//        Log.e(TAG, "Reset: " + mDatabaseHelper.resetAllData());
-        StringBuilder stringBuilder = new StringBuilder();
-        stringBuilder.append("[");
-        while (data.moveToNext()) {
-            stringBuilder.append(data.getInt(14));
-            stringBuilder.append(", ");
-        }
-        stringBuilder.append("]");
-        Log.i(TAG, stringBuilder.toString());
-
-        data.moveToFirst();
-        data.moveToPrevious();
-        while (data.moveToNext()) {
-            // get the value from the database in COL2 and add it to the nameList
-            if (data.getInt(14) == 0) { // if item is NOT in MyRestaurants
-                nameList.add(data.getString(2));
+                    }
+                    mHandler.sendEmptyMessage(MSG_DISCOVER_FINISH);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
-        }
+        });
+        mSearchThread.start();
 
-        // create the list adapter and set the adapter
-        listView.setChoiceMode(AbsListView.CHOICE_MODE_MULTIPLE);
-        ListAdapter listAdapter = new ArrayAdapter(this,
-                android.R.layout.simple_list_item_activated_1, nameList);
-        listView.setAdapter(listAdapter);
-        Log.e(TAG, "db size: " + mDatabaseHelper.size() + ", popRNameList size: " + nameList.size());
     }
 
-    private ArrayList<Restaurant> initializeDatabase() {
-        ArrayList<Restaurant> rList = new ArrayList<>();
-        try {
-            InputStream input = getAssets().open("sample_data.json");
-            int size = input.available();
-            byte[] buffer = new byte[size];
-            input.read(buffer);
-            input.close();
-
-            String jsonStr = new String(buffer, "UTF-8");
-            print(jsonStr);
-            JSONArray businesses = new JSONArray(jsonStr);
-
-//            print("businesses count: " + businesses.length());
-            for (int i = 0; i < businesses.length(); i++) {
-                JSONObject obj = businesses.getJSONObject(i);
-                String business_id = obj.getString("business_id");
-                String name = obj.getString("name");
-                String address = obj.getString("address");
-                String city = obj.getString("city");
-                String state = obj.getString("state");
-                String postal_code = obj.getString("postal_code");
-                String latitude = obj.getString("latitude");
-                String longitude = obj.getString("longitude");
-                String stars = obj.getString("stars");
-                String review_count = obj.getString("review_count");
-                String is_open = obj.getString("is_open");
-                String categories = obj.getString("categories");
-                String hours = obj.getJSONObject("hours").toString();
-
-//                Restaurant restaurant = new Restaurant(business_id, name, address, city, state, postal_code,
-//                        latitude, longitude, stars, review_count, is_open, categories, hours);
-//                rList.add(restaurant);
-//                Log.d(TAG, restaurant.getName());
-
-                this.addData(business_id, name, address, city, state, postal_code, latitude,
-                        longitude, stars, review_count, is_open, categories, hours);
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "Json parsing error: " + e.getMessage());
-            Toast.makeText(getApplicationContext(), "JSON Exception" + e.getMessage(), Toast.LENGTH_LONG).show();
-//            runOnUiThread(new Runnable() {
-//                @Override
-//                public void run() {
-//                    Toast.makeText(getApplicationContext(),
-//                            "Json parsing error: " + e.getMessage(),
-//                            Toast.LENGTH_LONG).show();
-//                }
-//            });
-
-        } catch (IOException e) {
-            Toast.makeText(getApplicationContext(), "IO Exception", Toast.LENGTH_LONG).show();
-            e.printStackTrace();
-        }
-        return rList;
-    }
-
+    private boolean mNotify = true;
     @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        getMenuInflater().inflate(R.menu.menu_main, menu);
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        int id = item.getItemId();
-
-        //noinspection SimplifiableIfStatement
-        if (id == R.id.action_settings) {
-            return true;
-        }
-
-        return super.onOptionsItemSelected(item);
-    }
-
-    @Override
-    public void onClick(View v) {
-        switch (v.getId()) {
-            case R.id.fab:
-                // if in popularRestaurants, it's not in myRestaurants --> if checked, move to myRestaurants
-                for (String business_id : checkedPositions) {
-                    this.updateData(1, business_id);
+    protected void onResume() {
+        super.onResume();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    //DatagramSocket socket = new DatagramSocket(UDP_PORT);
+                    InetAddress group = InetAddress.getByName(UDP_HOST);
+                    MulticastSocket socket = new MulticastSocket(UDP_PORT);
+                    socket.setLoopbackMode(true);
+                    socket.joinGroup(group);
+                    Log.d(TAG, "join success");
+                    mNotify = true;
+                    while (mNotify){
+                        byte[] buf = new byte[1024];
+                        DatagramPacket receiveDp = new DatagramPacket(buf,buf.length);
+                        Log.d(TAG, "waiting device....");
+                        socket.receive(receiveDp);
+                        byte[] bytes = receiveDp.getData();
+                        StringBuffer buffer = new StringBuffer();
+                        for (int i = 0; i < receiveDp.getLength(); i++) {
+                            // parse /r
+                            if (bytes[i] == 13) {
+                                continue;
+                            }
+                            buffer.append((char) bytes[i]);
+                        }
+                        if (!buffer.toString().contains("yeelight")){
+                            Log.d(TAG,"Listener receive msg:" + buffer.toString()+" but not a response");
+                            return;
+                        }
+                        String[] infos = buffer.toString().split("\n");
+                        HashMap<String, String> bulbInfo = new HashMap<String, String>();
+                        for (String str : infos) {
+                            int index = str.indexOf(":");
+                            if (index == -1) {
+                                continue;
+                            }
+                            String title = str.substring(0, index);
+                            String value = str.substring(index + 1);
+                            Log.d(TAG, "title = " + title + " value = " + value);
+                            bulbInfo.put(title, value);
+                        }
+                        if (!hasAdd(bulbInfo)){
+                            mDeviceList.add(bulbInfo);
+                        }
+                        mHandler.sendEmptyMessage(MSG_FOUND_DEVICE);
+                        Log.d(TAG, "get message:" + buffer.toString());
+                    }
+                }catch (Exception e){
+                    e.printStackTrace();
                 }
 
-                Intent intent = new Intent(MainActivity.this, MyRestaurantsActivity.class);
-                Cursor data = mDatabaseHelper.getData();
-                StringBuilder stringBuilder = new StringBuilder();
-                stringBuilder.append("[");
-                while (data.moveToNext()) {
-                    stringBuilder.append(data.getInt(14));
-                    stringBuilder.append(", ");
-                }
-                stringBuilder.append("]");
-                Log.i(TAG, stringBuilder.toString());
-                startActivity(intent);
-                break;
-            case R.id.checkBox:
-//                checkBox.setSelected(!checkBox.isSelected());
-                break;
+            }
+        }).start();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        mNotify = false;
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        multicastLock.release();
+    }
+
+    private class MyAdapter extends BaseAdapter {
+
+        private LayoutInflater mLayoutInflater;
+        private int mLayoutResource;
+
+        public MyAdapter(Context context) {
+            mLayoutInflater = LayoutInflater.from(context);
+            mLayoutResource = android.R.layout.simple_list_item_2;
+        }
+
+        @Override
+        public int getCount() {
+            return mDeviceList.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return mDeviceList.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return 0;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            View view;
+            HashMap<String, String> data = (HashMap<String, String>) getItem(position);
+            if (convertView == null) {
+                view = mLayoutInflater.inflate(mLayoutResource, parent, false);
+            } else {
+                view = convertView;
+            }
+            TextView textView = (TextView) view.findViewById(android.R.id.text1);
+            textView.setText("Type = "+data.get("model") );
+
+            Log.d(TAG, "name = " + textView.getText().toString());
+            TextView textSub = (TextView) view.findViewById(android.R.id.text2);
+            textSub.setText("location = " + data.get("Location"));
+            return view;
         }
     }
-
-    public void addData(String business_id, String name, String address, String city, String state,
-                        String postal_code, String latitude, String longitude, String stars,
-                        String review_count, String is_open, String categories, String hours) {
-        boolean successfulInsert = mDatabaseHelper.addData(business_id, name, address, city, state,
-                postal_code, latitude, longitude, stars, review_count, is_open, categories, hours);
-        print("addData: " + name + ", " + successfulInsert);
+    private boolean hasAdd(HashMap<String,String> bulbinfo){
+        for (HashMap<String,String> info : mDeviceList){
+            Log.d(TAG, "location params = " + bulbinfo.get("Location"));
+            if (info.get("Location").equals(bulbinfo.get("Location"))){
+                return true;
+            }
+        }
+        return false;
     }
-
-    public void updateData(int newVal, String business_id) {
-        int numRowsUpdated = mDatabaseHelper.updateData(newVal, business_id);
-        print("updateData: " + business_id + " to " + newVal + ", " + numRowsUpdated);
-    }
-
-    public void print(String message) {
-        Log.d(TAG, message);
-        Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show();
-    }
-
 }
